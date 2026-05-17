@@ -46,7 +46,6 @@ const Navbar = () => {
           </div>
 
           <div className="hidden lg:ml-6 lg:flex lg:items-center space-x-6">
-            <Link to="/vendor-login" className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-sm font-bold hover:bg-indigo-100 transition-all border border-indigo-100">Sell</Link>
             {!user?.isVendor && <Link to="/services" className="text-gray-600 hover:text-indigo-600 font-medium transition-colors">Services</Link>}
             <div className="h-6 w-px bg-gray-200"></div>
             {!user?.isVendor && (
@@ -89,7 +88,6 @@ const Navbar = () => {
       {isMenuOpen && (
         <div className="lg:hidden">
           <div className="pt-2 pb-3 space-y-1">
-            <Link to="/vendor-login" className="block pl-3 pr-4 py-2 border-l-4 border-indigo-500 text-base font-bold text-indigo-700 bg-indigo-50">Sell on Unibox</Link>
             {!user?.isVendor && <Link to="/services" className="block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium text-gray-600 hover:text-indigo-800 hover:bg-indigo-50 hover:border-indigo-500">Services</Link>}
             {!user?.isVendor && <Link to="/wishlist" className="block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium text-gray-600 hover:text-indigo-800 hover:bg-indigo-50 hover:border-indigo-500">Wishlist ({wishlist.length})</Link>}
             {!user?.isVendor && <Link to="/cart" className="block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium text-gray-600 hover:text-indigo-800 hover:bg-indigo-50 hover:border-indigo-500">Cart ({cartCount})</Link>}

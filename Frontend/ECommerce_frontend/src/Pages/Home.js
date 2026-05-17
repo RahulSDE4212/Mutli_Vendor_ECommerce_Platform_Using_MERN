@@ -64,7 +64,7 @@ const Home = () => {
           )}
           {user?.isVendor && (
             <div className="mt-10 flex gap-4">
-              <Link to="/vendor-login" className="inline-flex items-center justify-center px-8 py-3 border-2 border-white text-base font-medium rounded-full text-white hover:bg-white/10 transition-colors">
+              <Link to="/vendor" className="inline-flex items-center justify-center px-8 py-3 border-2 border-white text-base font-medium rounded-full text-white hover:bg-white/10 transition-colors">
                 Manage Store
               </Link>
             </div>
