@@ -1,8 +1,10 @@
+const http = require('http');
 const express = require('express');
 const path = require('path');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const cors = require('cors');
+const { initSocket } = require('./socket');
 
 // Load environment variables
 dotenv.config();
@@ -49,8 +51,10 @@ app.use('/api/services', serviceRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/addresses', addressRoutes);
 
-// Start server
-app.listen(PORT, () => {
+const server = http.createServer(app);
+initSocket(server);
+
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 

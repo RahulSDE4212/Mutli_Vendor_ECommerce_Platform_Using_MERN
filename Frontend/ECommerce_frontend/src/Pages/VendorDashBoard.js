@@ -1,15 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard,Package,ShoppingCart,User,Settings,Bell, Plus,TrendingUp,TrendingDown,DollarSign, 
-  Users,Activity,Edit2,Save,CheckCircle,X,Briefcase,Store,ChevronRight,LogOut,ShoppingBag,Trash2,Upload,ImagePlus
+  Users,Activity,Edit2,Save,CheckCircle,X,Briefcase,Store,ChevronRight,LogOut,ShoppingBag,Trash2,Upload,ImagePlus,Check,CheckCheck
 } from 'lucide-react';
 import { useAppContext } from '../Context/AppContext';
 import { useNavigate } from 'react-router-dom';
 import { getVendorOrders, uploadImage, updateOrderStatus } from '../api';
+import { connectVendorSocket } from '../socket';
+
+const getNotificationStorageKey = (vendorId) => `unibox-vendor-notifications-${vendorId}`;
+
+const loadStoredNotifications = (vendorId) => {
+  try {
+    const raw = localStorage.getItem(getNotificationStorageKey(vendorId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((n) => ({ ...n, read: Boolean(n.read) }));
+  } catch {
+    return [];
+  }
+};
+
+const saveStoredNotifications = (vendorId, notifications) => {
+  localStorage.setItem(getNotificationStorageKey(vendorId), JSON.stringify(notifications));
+};
 
 const VendorDashboard = () => {
   const { 
-    orders: globalOrders, 
     user: currentUser,
     authLoading,
     logout,
@@ -101,6 +118,8 @@ const VendorDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [inventorySubTab, setInventorySubTab] = useState('all'); // 'all', 'product', 'service'
   const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notificationPanelRef = useRef(null);
   const [editingItem, setEditingItem] = useState(null);
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [imageFile, setImageFile] = useState(null);
@@ -108,8 +127,6 @@ const VendorDashboard = () => {
   const imageInputRef = useRef(null);
   const [activeToast, setActiveToast] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth()); // 0-11
-
-  const prevOrdersCount = useRef(globalOrders.length);
 
   // Vendor Profile
   const [profile, setProfile] = useState({
@@ -119,6 +136,36 @@ const VendorDashboard = () => {
     phone: currentUser?.mobile || '',
     description: 'Premium electronics and professional tech services.'
   });
+
+  const updateNotifications = React.useCallback((updater) => {
+    setNotifications((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (vendorId) {
+        saveStoredNotifications(vendorId, next);
+      }
+      return next;
+    });
+  }, [vendorId]);
+
+  useEffect(() => {
+    if (!vendorId) return;
+    setNotifications(loadStoredNotifications(vendorId));
+  }, [vendorId]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        notificationPanelRef.current &&
+        !notificationPanelRef.current.contains(event.target)
+      ) {
+        setShowNotifications(false);
+      }
+    };
+    if (showNotifications) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showNotifications]);
 
   useEffect(() => {
     if (currentUser) {
@@ -239,41 +286,76 @@ const VendorDashboard = () => {
     navigate('/');
   };
 
-  // Integration with AppContext Orders (Real-time Notification)
+  // WebSocket: real-time order notifications for vendor
   useEffect(() => {
-    if (globalOrders.length > prevOrdersCount.current) {
-      const newOrder = globalOrders[0];
-      const vendorName = profile.storeName?.toLowerCase().trim();
-      const hasVendorItems = newOrder.items.some(item => 
-        item.vendor?.toLowerCase().trim() === vendorName || products.some(p => p.name === item.name && p.vendor?.toLowerCase().trim() === vendorName)
-      );
+    if (!currentUser?.isVendor || !vendorId) return;
 
-      if (hasVendorItems) {
-        const vendorItems = newOrder.items.filter(item => 
-          item.vendor?.toLowerCase().trim() === vendorName || products.some(p => p.name === item.name && p.vendor?.toLowerCase().trim() === vendorName)
-        );
-        const vendorTotal = vendorItems.reduce((sum, item) => sum + (item.price * item.qty), 0);
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    const socket = connectVendorSocket(token);
+
+    const handleNewOrder = (data) => {
+      updateNotifications((prev) => {
+        if (prev.some((n) => n.orderId === data.orderId)) return prev;
 
         const newNotification = {
-          id: Date.now(),
+          id: `${data.orderId}-${Date.now()}`,
           type: 'order',
-          orderId: newOrder.id,
-          customer: newOrder.customer?.name || 'Customer',
-          items: vendorItems.map(i => `${i.qty}x ${i.name}`).join(', '),
-          total: vendorTotal,
-          time: 'Just now'
+          orderId: data.orderId,
+          customer: data.customer || 'Customer',
+          items: data.items,
+          total: data.total,
+          time: data.time || 'Just now',
+          message: data.message,
+          read: false,
+          createdAt: new Date().toISOString(),
         };
 
-        setNotifications(prev => [newNotification, ...prev].slice(0, 10));
         setActiveToast(newNotification);
-        setTimeout(() => setActiveToast(null), 5000); // Hide toast after 5s
-      }
-    }
-    prevOrdersCount.current = globalOrders.length;
-  }, [globalOrders, profile.storeName, products]);
+        setTimeout(() => setActiveToast(null), 5000);
+        return [newNotification, ...prev];
+      });
+      loadVendorOrders();
+    };
 
-  const removeNotification = (id) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
+    socket.on('new_order', handleNewOrder);
+    socket.on('connect_error', (err) => {
+      console.error('WebSocket connection error:', err.message);
+    });
+
+    return () => {
+      socket.off('new_order', handleNewOrder);
+      socket.disconnect();
+    };
+  }, [currentUser, vendorId, loadVendorOrders, updateNotifications]);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const formatNotificationTime = (n) => {
+    if (n.createdAt) {
+      return new Date(n.createdAt).toLocaleString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+    return n.time || '';
+  };
+
+  const markAsRead = (id) => {
+    updateNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+    );
+  };
+
+  const markAllAsRead = () => {
+    updateNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  };
+
+  const deleteNotification = (id) => {
+    updateNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
   const [savingItem, setSavingItem] = useState(false);
@@ -526,35 +608,78 @@ const VendorDashboard = () => {
             </p>
           </div>
           <div className="flex items-center gap-4">
-            <div className="relative group">
-              <button className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-400 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm">
+            <div className="relative" ref={notificationPanelRef}>
+              <button
+                type="button"
+                onClick={() => setShowNotifications((open) => !open)}
+                className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-400 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm"
+              >
                 <Bell className="h-6 w-6" />
-                {notifications.length > 0 && (
-                  <span className="absolute top-2 right-2 h-3 w-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+                {unreadCount > 0 && (
+                  <span className="absolute top-2 right-2 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-white flex items-center justify-center">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
                 )}
               </button>
-              {/* Notification Dropdown Simulation */}
-              <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-100 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-all transform origin-top-right z-50 overflow-hidden">
-                <div className="p-4 border-b border-slate-50 font-bold text-slate-900">Notifications</div>
-                <div className="max-h-60 overflow-y-auto">
-                  {notifications.length > 0 ? notifications.map(n => (
-                    <div key={n.id} className="p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">New Order</span>
-                        <span className="text-[10px] text-slate-400">{n.time}</span>
+              {showNotifications && (
+              <div className="absolute right-0 mt-2 w-96 bg-white rounded-2xl shadow-xl border border-slate-100 z-50 overflow-hidden">
+                <div className="p-4 border-b border-slate-50 flex items-center justify-between gap-2">
+                  <span className="font-bold text-slate-900">Notifications</span>
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={markAllAsRead}
+                      className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-72 overflow-y-auto">
+                  {notifications.length > 0 ? notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      className={`p-4 border-b border-slate-50 transition-colors ${
+                        n.read ? 'bg-white' : 'bg-indigo-50/60 border-l-4 border-l-indigo-500'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-1 gap-2">
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${n.read ? 'text-slate-400' : 'text-indigo-600'}`}>
+                          {n.read ? 'Order' : 'New Order'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 shrink-0">{formatNotificationTime(n)}</span>
                       </div>
                       <p className="text-sm font-black text-slate-900 mb-1">{n.customer} placed an order</p>
-                      <p className="text-xs text-slate-500 mb-2 line-clamp-1">{n.items}</p>
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-slate-400">#{n.orderId}</span>
-                        <span className="text-sm font-black text-green-600">₹{n.total.toFixed(2)}</span>
+                      <p className="text-xs text-slate-500 mb-2 line-clamp-2">{n.items}</p>
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-xs font-bold text-slate-400">#{String(n.orderId).slice(-8)}</span>
+                        <span className="text-sm font-black text-green-600">₹{Number(n.total).toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!n.read && (
+                          <button
+                            type="button"
+                            onClick={() => markAsRead(n.id)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                          >
+                            <Check className="h-3.5 w-3.5" /> Mark as read
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => deleteNotification(n.id)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors ml-auto"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        </button>
                       </div>
                     </div>
                   )) : (
-                    <div className="p-8 text-center text-slate-400 text-sm">No new alerts</div>
+                    <div className="p-8 text-center text-slate-400 text-sm">No notifications</div>
                   )}
                 </div>
               </div>
+              )}
             </div>
             <button 
               onClick={openAddItemModal}
@@ -770,24 +895,6 @@ const VendorDashboard = () => {
             </div>
           </div>
         )}
-
-        {/* Success Toast for Orders */}
-        <div className="fixed bottom-8 right-8 z-50 space-y-3">
-          {notifications.map(note => (
-            <div key={note.id} className="bg-slate-900 text-white p-5 rounded-2xl shadow-2xl flex items-start gap-4 w-96 animate-fade-in-up border border-slate-800">
-              <div className="p-2 bg-indigo-600 rounded-xl">
-                <ShoppingCart className="h-6 w-6 text-white" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-black">Incoming Order!</p>
-                <p className="text-sm text-slate-300 mt-1">{note.message}</p>
-              </div>
-              <button onClick={() => removeNotification(note.id)} className="text-slate-500 hover:text-white">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-          ))}
-        </div>
 
         {/* Tab Content */}
         <div className="space-y-8">

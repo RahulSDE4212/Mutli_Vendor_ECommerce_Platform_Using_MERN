@@ -18,25 +18,16 @@ const ProductDetails = () => {
   useEffect(() => {
     const loadProduct = async () => {
       setLoading(true);
-      // First try to find in context products (already fetched from backend)
-      const found = products.find(p => p.id === id);
-      if (found) {
-        setProduct(found);
-        setSelectedSize(found.sizes && found.sizes.length > 0 ? found.sizes[0] : null);
-        setLoading(false);
-        return;
-      }
-      // If not found, fetch from backend using the id (which could be string or number)
       try {
         const response = await fetchProductById(id);
         setProduct(response.data);
-        setSelectedSize(response.data.sizes && response.data.sizes.length > 0 ? response.data.sizes[0] : null);
+        setSelectedSize(response.data.sizes?.length > 0 ? response.data.sizes[0] : null);
       } catch (error) {
         console.error('Failed to fetch product:', error);
-        // Fallback to first product in context (or show error)
-        if (products.length > 0) {
-          setProduct(products[0]);
-          setSelectedSize(products[0].sizes && products[0].sizes.length > 0 ? products[0].sizes[0] : null);
+        const found = products.find((p) => p.id === id);
+        if (found) {
+          setProduct(found);
+          setSelectedSize(found.sizes?.length > 0 ? found.sizes[0] : null);
         }
       } finally {
         setLoading(false);
@@ -128,7 +119,9 @@ const ProductDetails = () => {
                 <span className="flex-1 text-center font-medium">{quantity}</span>
                 <button onClick={() => setQuantity(Math.min(product.stock, quantity + 1))} className="px-4 py-2 text-gray-600 hover:bg-gray-50">+</button>
               </div>
-              <p className="text-sm text-green-600 mt-2 font-medium">{product.stock} in stock</p>
+              <p className={`text-sm mt-2 font-medium ${product.stock > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {product.stock > 0 ? `${product.stock} in stock` : 'Product unavailable'}
+              </p>
             </div>
           </div>
 

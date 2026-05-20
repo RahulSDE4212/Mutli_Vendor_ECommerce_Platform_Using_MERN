@@ -1,9 +1,72 @@
 import React, { useState } from 'react';
-import { Download, Package, Wrench, User, LogOut, ChevronDown, ChevronUp, MessageSquare, Star, X } from 'lucide-react';
+import { Download, Package, Wrench, User, LogOut, ChevronDown, ChevronUp, MessageSquare, Star, X, Calendar } from 'lucide-react';
 import { useAppContext } from '../Context/AppContext';
 import { useNavigate } from 'react-router-dom';
+import { downloadOrderInvoice } from '../api';
 
 const isDelivered = (status) => String(status || '').toLowerCase() === 'delivered';
+
+const normalizeDate = (value) => {
+  if (!value) return null;
+  const str = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
+  const parsed = new Date(str);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().split('T')[0];
+};
+
+const filterByDateRange = (items, dateFrom, dateTo, getDate = (item) => item.date) => {
+  if (!dateFrom && !dateTo) return items;
+  return items.filter((item) => {
+    const itemDate = normalizeDate(getDate(item));
+    if (!itemDate) return false;
+    if (dateFrom && itemDate < dateFrom) return false;
+    if (dateTo && itemDate > dateTo) return false;
+    return true;
+  });
+};
+
+const DateRangeFilter = ({ dateFrom, dateTo, onFromChange, onToChange, onClear, label }) => (
+  <div className="mb-6 p-4 bg-gray-50 rounded-2xl border border-gray-100">
+    <div className="flex flex-wrap items-end gap-4">
+      <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <Calendar className="h-4 w-4 text-indigo-600" />
+        {label}
+      </div>
+      <div>
+        <label htmlFor={`${label}-from`} className="block text-xs font-medium text-gray-500 mb-1">From</label>
+        <input
+          id={`${label}-from`}
+          type="date"
+          value={dateFrom}
+          max={dateTo || undefined}
+          onChange={(e) => onFromChange(e.target.value)}
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+      <div>
+        <label htmlFor={`${label}-to`} className="block text-xs font-medium text-gray-500 mb-1">To</label>
+        <input
+          id={`${label}-to`}
+          type="date"
+          value={dateTo}
+          min={dateFrom || undefined}
+          onChange={(e) => onToChange(e.target.value)}
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+      {(dateFrom || dateTo) && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="px-4 py-2 text-sm font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-colors"
+        >
+          Clear filter
+        </button>
+      )}
+    </div>
+  </div>
+);
 
 const Profile = () => {
   const [activeTab, setActiveTab] = useState('orders');
@@ -16,13 +79,56 @@ const Profile = () => {
   // Pagination states
   const [ordersPage, setOrdersPage] = useState(1);
   const [servicesPage, setServicesPage] = useState(1);
+  const [ordersDateFrom, setOrdersDateFrom] = useState('');
+  const [ordersDateTo, setOrdersDateTo] = useState('');
+  const [servicesDateFrom, setServicesDateFrom] = useState('');
+  const [servicesDateTo, setServicesDateTo] = useState('');
   const ITEMS_PER_PAGE = 3;
 
-  const { user, logout, serviceBookings, orders, submitOrderFeedback } = useAppContext();
+  const { user, logout, serviceBookings, orders, services, submitOrderFeedback } = useAppContext();
   const navigate = useNavigate();
 
-  const downloadInvoice = (id) => {
-    alert(`Downloading invoice for ${id}...`);
+  const goToProduct = (productId, e) => {
+    e?.stopPropagation();
+    if (productId) navigate(`/product/${productId}`);
+  };
+
+  const goToService = (serviceName) => {
+    const matched = services.find((s) => s.name === serviceName);
+    if (matched?.id) {
+      navigate(`/services#service-${matched.id}`);
+    } else {
+      navigate('/services');
+    }
+  };
+
+  const downloadInvoice = async (orderId, e) => {
+    e?.stopPropagation();
+    try {
+      const response = await downloadOrderInvoice(orderId);
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `invoice-${orderId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      let message = 'Failed to download invoice';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await err.response.data.text());
+          message = parsed.message || message;
+        } catch {
+          // keep default message
+        }
+      } else if (err.response?.data?.message) {
+        message = err.response.data.message;
+      }
+      alert(message);
+    }
   };
 
   const handleLogout = () => {
@@ -79,12 +185,22 @@ const Profile = () => {
     );
   }
 
-  // Calculate paginated data
-  const totalOrderPages = Math.ceil(orders.length / ITEMS_PER_PAGE);
-  const paginatedOrders = orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE);
+  const filteredOrders = filterByDateRange(orders, ordersDateFrom, ordersDateTo);
+  const filteredServices = filterByDateRange(serviceBookings, servicesDateFrom, servicesDateTo);
+  const hasOrdersDateFilter = Boolean(ordersDateFrom || ordersDateTo);
+  const hasServicesDateFilter = Boolean(servicesDateFrom || servicesDateTo);
 
-  const totalServicePages = Math.ceil(serviceBookings.length / ITEMS_PER_PAGE);
-  const paginatedServices = serviceBookings.slice((servicesPage - 1) * ITEMS_PER_PAGE, servicesPage * ITEMS_PER_PAGE);
+  const totalOrderPages = Math.ceil(filteredOrders.length / ITEMS_PER_PAGE) || 1;
+  const paginatedOrders = filteredOrders.slice(
+    (ordersPage - 1) * ITEMS_PER_PAGE,
+    ordersPage * ITEMS_PER_PAGE
+  );
+
+  const totalServicePages = Math.ceil(filteredServices.length / ITEMS_PER_PAGE) || 1;
+  const paginatedServices = filteredServices.slice(
+    (servicesPage - 1) * ITEMS_PER_PAGE,
+    servicesPage * ITEMS_PER_PAGE
+  );
 
   return (
     <div className="max-w-5xl mx-auto mt-8">
@@ -124,12 +240,26 @@ const Profile = () => {
         <div className="p-8">
           {activeTab === 'orders' && (
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex justify-between items-center flex-wrap gap-2">
                 Your Orders
-                <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Total: {orders.length}</span>
+                <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                  {hasOrdersDateFilter ? `${filteredOrders.length} of ${orders.length}` : `Total: ${orders.length}`}
+                </span>
               </h2>
+              {orders.length > 0 && (
+                <DateRangeFilter
+                  label="Filter by date"
+                  dateFrom={ordersDateFrom}
+                  dateTo={ordersDateTo}
+                  onFromChange={(value) => { setOrdersDateFrom(value); setOrdersPage(1); }}
+                  onToChange={(value) => { setOrdersDateTo(value); setOrdersPage(1); }}
+                  onClear={() => { setOrdersDateFrom(''); setOrdersDateTo(''); setOrdersPage(1); }}
+                />
+              )}
               {orders.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">You have no past orders.</p>
+              ) : filteredOrders.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">No orders found in this date range.</p>
               ) : (
                 <>
                   <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
@@ -156,7 +286,7 @@ const Profile = () => {
                           <div className="flex items-center gap-3 flex-wrap justify-end">
                             <span className="text-xl font-bold text-gray-900">₹{order.total.toFixed(2)}</span>
                             <button 
-                              onClick={(e) => { e.stopPropagation(); downloadInvoice(order.id); }}
+                              onClick={(e) => downloadInvoice(order.id, e)}
                               className="flex items-center gap-2 text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-full transition-colors"
                             >
                               <Download className="h-4 w-4" /> Invoice
@@ -181,7 +311,13 @@ const Profile = () => {
                                 <li key={idx} className="flex justify-between items-center text-sm">
                                   <div className="flex items-center gap-2">
                                     <span className="bg-gray-200 text-gray-700 rounded text-xs px-2 py-1 font-medium">{item.qty}x</span>
-                                    <span className="text-gray-700">{item.name} {item.size ? `(Size: ${item.size})` : ''}</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => goToProduct(item.id, e)}
+                                      className="text-gray-700 hover:text-indigo-600 hover:underline text-left"
+                                    >
+                                      {item.name} {item.size ? `(Size: ${item.size})` : ''}
+                                    </button>
                                   </div>
                                   <span className="font-medium text-gray-900">₹{(item.price * item.qty).toFixed(2)}</span>
                                 </li>
@@ -245,12 +381,26 @@ const Profile = () => {
 
           {activeTab === 'services' && (
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex justify-between items-center flex-wrap gap-2">
                 Service Requests
-                <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Total: {serviceBookings.length}</span>
+                <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                  {hasServicesDateFilter ? `${filteredServices.length} of ${serviceBookings.length}` : `Total: ${serviceBookings.length}`}
+                </span>
               </h2>
+              {serviceBookings.length > 0 && (
+                <DateRangeFilter
+                  label="Filter by appointment date"
+                  dateFrom={servicesDateFrom}
+                  dateTo={servicesDateTo}
+                  onFromChange={(value) => { setServicesDateFrom(value); setServicesPage(1); }}
+                  onToChange={(value) => { setServicesDateTo(value); setServicesPage(1); }}
+                  onClear={() => { setServicesDateFrom(''); setServicesDateTo(''); setServicesPage(1); }}
+                />
+              )}
               {serviceBookings.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">You have no booked services.</p>
+              ) : filteredServices.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">No services found in this date range.</p>
               ) : (
                 <>
                   <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
@@ -258,7 +408,13 @@ const Profile = () => {
                       <div key={service.id} className="flex flex-col sm:flex-row sm:items-center justify-between bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
                         <div className="mb-4 sm:mb-0">
                           <div className="flex items-center gap-3 mb-2">
-                            <span className="font-bold text-gray-900">{service.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => goToService(service.name)}
+                              className="font-bold text-gray-900 hover:text-indigo-600 hover:underline text-left"
+                            >
+                              {service.name}
+                            </button>
                             <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold tracking-wide">{service.status}</span>
                           </div>
                           <p className="text-gray-500 text-sm">Date: {service.date} ({service.slot}) • Tech: {service.technician}</p>

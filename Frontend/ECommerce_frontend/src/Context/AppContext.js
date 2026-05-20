@@ -401,12 +401,19 @@ export const AppProvider = ({ children }) => {
 
   const addOrder = async (orderData) => {
     try {
-      for (const item of cart) {
+      // Backend cart has one row per product — merge duplicate lines (e.g. different sizes)
+      const qtyByProductId = cart.reduce((acc, item) => {
+        const pid = item.id;
+        acc[pid] = (acc[pid] || 0) + (Number(item.quantity) || 0);
+        return acc;
+      }, {});
+
+      for (const [productId, quantity] of Object.entries(qtyByProductId)) {
         try {
-          await api.updateCartItem(item.id, item.quantity);
+          await api.updateCartItem(productId, quantity);
         } catch (err) {
           if (err.response?.status === 404) {
-            await api.addToCart(item.id, item.quantity);
+            await api.addToCart(productId, quantity);
           } else {
             throw err;
           }
@@ -414,6 +421,26 @@ export const AppProvider = ({ children }) => {
       }
 
       const response = await api.createOrder(orderData);
+
+      // Refresh catalog stock after purchase
+      const stockUpdates = response.data?.stockUpdates;
+      if (stockUpdates?.length) {
+        setProducts((prev) =>
+          prev.map((p) => {
+            const update = stockUpdates.find((u) => u.productId === p.id);
+            return update ? { ...p, stock: update.stock } : p;
+          })
+        );
+      } else {
+        try {
+          const productsRes = await api.fetchProducts();
+          if (Array.isArray(productsRes.data)) {
+            setProducts(productsRes.data);
+          }
+        } catch (refreshErr) {
+          console.error('Failed to refresh products after order', refreshErr);
+        }
+      }
       
       // Transform backend response to match frontend structure
       const newOrder = {
@@ -480,10 +507,26 @@ export const AppProvider = ({ children }) => {
       return;
     }
 
+    const availableStock = Number(product.stock) || 0;
+    const existingItem = cart.find((item) => item.id === product.id && item.size === size);
+    const currentQtyInCart = existingItem ? existingItem.quantity : 0;
+    const requestedTotal = currentQtyInCart + quantity;
+
+    if (availableStock <= 0) {
+      alert(`Sorry, ${product.name} is out of stock.`);
+      return;
+    }
+
+    if (requestedTotal > availableStock) {
+      alert(
+        `Insufficient stock for ${product.name}. Available: ${availableStock}, Requested: ${requestedTotal}`
+      );
+      return;
+    }
+
     try {
       await api.addToCart(product._id || product.id, quantity);
       // Update local state optimistically
-      const existingItem = cart.find((item) => item.id === product.id && item.size === size);
       if (existingItem) {
         setCart(prevCart => prevCart.map((item) =>
           item.id === product.id && item.size === size ? { ...item, quantity: item.quantity + quantity } : item
@@ -495,7 +538,7 @@ export const AppProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Failed to add to cart', err);
-      alert('Failed to add item to cart');
+      alert(err.response?.data?.message || 'Failed to add item to cart');
     }
   };
 

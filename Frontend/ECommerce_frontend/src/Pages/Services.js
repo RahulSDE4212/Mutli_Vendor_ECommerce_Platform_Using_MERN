@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Calendar, CheckCircle2, Star, X } from 'lucide-react';
 import { useAppContext } from '../Context/AppContext';
 // import serviceHeroImg from '../banners/service5.jfif';
@@ -15,6 +15,15 @@ const Services = () => {
   const [submitting, setSubmitting] = useState(false);
   const { serviceBookings, addServiceBooking, services, user } = useAppContext();
   const today = new Date().toISOString().split('T')[0];
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash?.startsWith('#service-')) return;
+    const el = document.querySelector(hash);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [services]);
 
   const handleBook = (service) => {
     if (!user || user.isVendor) {
@@ -116,7 +125,7 @@ const Services = () => {
             const isBooked = serviceBookings.find((b) => b.name === service.name);
 
             return (
-              <div key={service.id} className="bg-white rounded-2xl p-4 shadow-sm hover:shadow-xl transition-all duration-300 border border-gray-100 flex flex-col group relative">
+              <div id={`service-${service.id}`} key={service.id} className="bg-white rounded-2xl p-4 shadow-sm hover:shadow-xl transition-all duration-300 border border-gray-100 flex flex-col group relative">
                 {isBooked && (
                   <div
                     className={`absolute top-6 right-6 z-10 px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1 ${

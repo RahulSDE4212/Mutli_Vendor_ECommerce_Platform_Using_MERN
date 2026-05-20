@@ -71,6 +71,8 @@ export const getAllOrders = () => API.get('/orders/all');
 export const updateOrderStatus = (orderId, status) => API.put(`/orders/${orderId}/status`, { status });
 export const submitOrderFeedback = (orderId, feedback) =>
   API.post(`/orders/${orderId}/feedback`, feedback);
+export const downloadOrderInvoice = (orderId) =>
+  API.get(`/orders/${orderId}/invoice`, { responseType: 'blob' });
 
 // Service booking APIs
 export const createServiceBooking = (bookingData) => API.post('/bookings', bookingData);
